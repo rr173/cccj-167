@@ -21,12 +21,26 @@ python3 -m dlq_recovery export --out ./replay-pkg ...
 
 # 4) 校验
 python3 -m dlq_recovery verify --package ./replay-pkg
+
+# 5) 交付后对账：登记 → 导入回执 → 对账预览 → 签发补投 → 校验补投包
+python3 -m dlq_recovery register --store ./recon-store --package ./replay-pkg --by alice
+python3 -m dlq_recovery import-receipts --store ./recon-store \
+    --receipts ./receipts/batch-a.jsonl --by alice
+python3 -m dlq_recovery reconcile --store ./recon-store --text
+python3 -m dlq_recovery issue-replay --store ./recon-store --by alice
+python3 -m dlq_recovery verify-replay --store ./recon-store --package <补投包目录>
 ```
 
 运行测试：
 
 ```bash
 python3 -m unittest discover -s tests -t .
+```
+
+生成对账夹具（含回执样例与逐步手册）：
+
+```bash
+python3 -I examples/reconciliation/build_fixtures.py
 ```
 
 ## 输入格式
@@ -150,6 +164,123 @@ replay-pkg/
 - 中途失败会清理临时目录，目标目录不会出现半成品；
 - `.complete` 标记缺失、文件缺失、哈希不符、分区内偏移乱序、隔离件混入重投包
   —— `verify` 都会以退出码 7 报告，并给出结构化的 `problems` 列表。
+
+## 交付后对账与补投
+
+下游只能拿回**分批、乱序的离线回执**时，用对账存储（`--store` 目录，全程本地
+文件）完成登记、收敛、补投签发与恢复。一次交付对应一个独立的 `attempt_id`：
+首次登记生成原包尝试（`origin`），每次补投生成新的补投尝试（`replay`）。
+
+### 回执格式（JSONL，每行一条）
+
+```json
+{
+  "attempt_id": "attempt-0001",
+  "package_digest": "00389b07…（64 位 sha256，登记时由包内容计算）",
+  "event_id": "ev-c26fb572b7caaf0460c4",
+  "payload_sha256": "…（包内该事件版本的载荷摘要）",
+  "result": "not_executed",
+  "reported_at": "2026-11-17T10:00:00Z",
+  "reported_by": "downstream-batch-a",
+  "receipt_id": "下游自带的去重键（可选）",
+  "detail": "可选原文说明"
+}
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `attempt_id` | 是 | 回执所属的交付尝试；迟到旧回执仍必须指向原尝试 |
+| `package_digest` | 是 | 包**内容身份**。与登记不符直接拒收，业务键相同的包不能顶替 |
+| `event_id` / `payload_sha256` | 是 | 绑定包内具体事件版本，回执不能挂到别的载荷上 |
+| `result` | 是 | `success`（已成功执行）/ `not_executed`（明确未执行，可再试）/ `unknown`（无法确认） |
+| `reported_at` / `reported_by` | 是 | 下游报告时间与来源 |
+| `receipt_id` / `detail` | 否 | 下游去重键与说明原文 |
+
+关键语义：
+
+- **未知不是失败，缺回执也不是失败**。`unknown` 与无回执（派生态 `missing`）
+  都不能当作 `not_executed` 自动补投，只能被**同次尝试**后续的确定结果消解。
+- 同次尝试同时出现 `success` 与 `not_executed` 是**矛盾证据**（派生态
+  `conflict`），不按文件顺序覆盖，永久阻断该事件自动补投并在对账视图展示。
+- 解析采用严格 JSON（拒绝重复键、`NaN`/`Infinity`、未知字段）；一份文件只
+  允许一个 `attempt_id`。任何格式或身份绑定错误都会让**整份文件原子拒收**，
+  存储不留下部分状态。
+
+### 持久化对账存储
+
+```
+recon-store/
+  log/
+    events.log              哈希链只追加日志（唯一事实源）
+    receipts/0001-*.jsonl   原始回执归档（按导入序号保留）
+  packages/<chain>/
+    origin/                 登记时复制的原始交付包（不可变）
+    attempts/attempt-0002/package/   每次补投签发的补投包
+  state.json                可重建的物化快照（缓存，落后即按日志重放）
+  .lock                     进程间文件锁
+```
+
+- **哈希链日志**：每条记录带 `seq`、`prev_hash`、`entry_hash`，篡改或断链在
+  `verify-store` / 下次打开时即被发现。
+- **证据幂等**：证据按回执内容哈希 `(attempt, event, evidence_hash)` 去重；
+  重复文件、拆分文件、乱序导入收敛到同一结果，但每条证据的全部导入来源
+  （文件、行号、导入人、序号）都作为 provenance 保留，可追溯。
+- **原包不可变**：载荷、批准、来源证据保存在登记快照里，回执无法修改；
+  补投记录通过 `origin` 块原样携带它们。
+- 相同有效证据的导入顺序与文件分块不影响最终对账结果（收敛是纯函数）。
+
+### 派生态与补投选批
+
+每个 `(尝试, 事件)` 的派生态：`success` / `not_executed` / `unknown` /
+`missing` / `conflict`。补投候选按**原包单分区顺序**从前向后检查：
+
+- 已成功事件：跳过，且**任何已确认成功都禁止再次补投**；
+- 明确未执行且未成功：可加入新批次；
+- 遇到未知 / 缺回执 / 矛盾 / 尚在未完成补投尝试中的事件：成为本分区**阻塞点**，
+  其后事件一律截留；**其他分区不受牵连**。
+
+新尝试只允许包含上一次**明确未执行且尚未成功**的事件；每条补投记录带
+`replay.attempt_id`（本次尝试）、`replay.prev_attempt_id` 与
+`replay.basis`（前次失败尝试、派生态与全部失败证据哈希）。
+
+### 可恢复发布协议
+
+`issue-replay` 不要求数据库与文件系统跨介质事务，分两阶段：
+
+1. 先在内存确定包内容与确定性 `package_digest`，再落 `attempt_publishing`
+   日志意图——此刻事件已被占用，预览不会占用事件；
+2. 在临时目录构建包、fsync 后原子替换到目标目录，再落 `attempt_published`。
+
+重新打开存储时自动恢复：存在完整包（`.complete` + 摘要匹配）则**追认已签发**，
+事件保持占用、禁止再签；没有可用包则**中止意图并释放事件**，允许重新签发。
+因此不会出现"没有可用包却永久占用事件"或"旧包已可执行却能再次签发"。
+已发出的补投尝试在未完成对账前不能重复签发；操作员可用 `seal-attempt`
+宣告一轮对账结束后再签发下一轮。
+
+### 跨尝试异常
+
+- 早先尝试的迟到回执只能挂回原尝试；指向新尝试的旧摘要回执被拒收。
+- 成功（或矛盾）证据到达时事件已进入后续补投尝试 → 展示
+  `late_success_after_reissue`；不同尝试出现成功/未执行分歧 → 展示
+  `cross_attempt_contradiction`。异常只展示、不抹掉任何交付历史。
+
+### 补投包校验（verify-replay）
+
+以日志中的签发意图为权威，拒绝：替换源包载荷/批准/来源证据、批次内重复
+事件、越过分区阻塞位置、事件集合或前次失败依据与登记内容不符、缺少完成
+标记、来源不明的包。
+
+### 对账相关命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `register` | 登记已通过 `verify` 的交付包，形成首次尝试并复制不可变快照 |
+| `import-receipts` | 导入回执（整文件解析 + 绑定校验通过后原子生效） |
+| `reconcile` | 对账预览：每事件派生态、证据来源、分区阻塞点、补投候选、异常（`--text` 文本视图） |
+| `issue-replay` | 签发下一次补投批次（新 `attempt_id`，两阶段可恢复发布） |
+| `verify-replay` | 校验补投包与对账登记逐字一致 |
+| `seal-attempt` / `abort-attempt` | 封存一轮尝试 / 中止无可用包的尝试并释放占用 |
+| `verify-store` | 校验哈希链与物化快照（快照落后自动重建） |
 
 ## 退出码
 

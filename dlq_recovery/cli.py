@@ -9,6 +9,16 @@ export    仅导出已批准版本，生成按分区排序的重投包
 verify    校验已导出的重投包
 inspect   打印单个 event_id（或业务键）的完整证据
 
+交付后对账与补投（对账存储，全程本地文件）：
+register        登记已校验的交付包，形成首次交付尝试
+import-receipts 导入下游回执（绑定包内容身份/尝试/事件版本，整文件原子生效）
+reconcile       对账预览：每事件派生态、分区阻塞点、补投候选、跨尝试异常
+issue-replay    签发下一次补投批次（新 attempt_id，可恢复发布协议）
+verify-replay   校验补投包与登记内容一致
+seal-attempt    宣告某次尝试对账结束
+abort-attempt   中止无可用包的尝试并释放事件占用
+verify-store    校验对账存储哈希链与快照
+
 所有子命令都不建立任何队列连接。``--plan FILE`` 允许直接读取已保存的
 计划做批准前展示；批准与导出始终以当前输入重新构建，避免陈旧计划被误用。
 """
@@ -34,6 +44,9 @@ from .offline import ensure_offline_runtime
 from .package import export_package, verify_package
 from .plan import Plan, assert_exportable, build_plan
 from .preview import render_preview
+from .recon import ReconciliationStore
+from .recon_view import render_reconcile
+from .replay import verify_replay_package
 
 EXIT_OK = 0
 EXIT_INTEGRITY = 7
@@ -221,6 +234,69 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 交付后对账与补投
+# ---------------------------------------------------------------------------
+def cmd_register(args: argparse.Namespace) -> int:
+    store = ReconciliationStore(args.store)
+    result = store.register_package(args.package, by=args.by, note=args.note)
+    _print_json(result)
+    return EXIT_OK
+
+
+def cmd_import_receipts(args: argparse.Namespace) -> int:
+    store = ReconciliationStore(args.store)
+    result = store.import_receipts(args.receipts, by=args.by)
+    _print_json(result)
+    return EXIT_OK
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    store = ReconciliationStore(args.store)
+    view = store.reconcile_view(chain_id=args.chain)
+    if args.text:
+        sys.stdout.write(render_reconcile(view))
+    else:
+        _print_json(view)
+    return EXIT_OK
+
+
+def cmd_issue_replay(args: argparse.Namespace) -> int:
+    store = ReconciliationStore(args.store)
+    result = store.issue_replay(chain_id=args.chain, by=args.by)
+    _print_json(result)
+    return EXIT_OK
+
+
+def cmd_verify_replay(args: argparse.Namespace) -> int:
+    store = ReconciliationStore(args.store)
+    try:
+        report = verify_replay_package(store, args.package)
+    except RecoveryError as exc:
+        _print_json({"ok": False, "error": exc.to_dict()})
+        return EXIT_INTEGRITY
+    _print_json(report)
+    return EXIT_OK
+
+
+def cmd_seal_attempt(args: argparse.Namespace) -> int:
+    store = ReconciliationStore(args.store)
+    _print_json(store.seal_attempt(args.attempt_id, by=args.by, reason=args.reason))
+    return EXIT_OK
+
+
+def cmd_abort_attempt(args: argparse.Namespace) -> int:
+    store = ReconciliationStore(args.store)
+    _print_json(store.abort_attempt(args.attempt_id, by=args.by, reason=args.reason))
+    return EXIT_OK
+
+
+def cmd_verify_store(args: argparse.Namespace) -> int:
+    store = ReconciliationStore(args.store)
+    _print_json(store.verify_log())
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
 # 参数解析
 # ---------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
@@ -272,6 +348,55 @@ def build_parser() -> argparse.ArgumentParser:
     p_inspect.add_argument("--event-id")
     p_inspect.add_argument("--business-key")
     p_inspect.set_defaults(func=cmd_inspect)
+
+    # --- 交付后对账与补投 ---
+    p_register = sub.add_parser("register", help="登记一个已校验的交付包，形成首次交付尝试")
+    p_register.add_argument("--store", required=True, help="对账存储目录（工具自管，全程本地文件）")
+    p_register.add_argument("--package", required=True, help="已通过 verify 的交付包目录")
+    p_register.add_argument("--by", required=True, help="登记操作员")
+    p_register.add_argument("--note")
+    p_register.set_defaults(func=cmd_register)
+
+    p_import = sub.add_parser("import-receipts", help="导入一次交付尝试的执行回执（JSONL）")
+    p_import.add_argument("--store", required=True)
+    p_import.add_argument("--receipts", required=True, help="回执文件；一份文件只允许一个 attempt_id")
+    p_import.add_argument("--by", required=True, help="导入操作员")
+    p_import.set_defaults(func=cmd_import_receipts)
+
+    p_recon = sub.add_parser("reconcile", help="对账预览：每事件结果、阻塞点、补投候选、异常")
+    p_recon.add_argument("--store", required=True)
+    p_recon.add_argument("--chain", help="交付链 id；存储中只有一条链时可省略")
+    p_recon.add_argument("--text", action="store_true", help="输出终端文本而非 JSON")
+    p_recon.set_defaults(func=cmd_reconcile)
+
+    p_issue = sub.add_parser("issue-replay", help="签发下一次补投批次（新的 attempt_id，可恢复发布）")
+    p_issue.add_argument("--store", required=True)
+    p_issue.add_argument("--chain")
+    p_issue.add_argument("--by", required=True)
+    p_issue.set_defaults(func=cmd_issue_replay)
+
+    p_vreplay = sub.add_parser("verify-replay", help="校验补投包与对账登记是否一致")
+    p_vreplay.add_argument("--store", required=True)
+    p_vreplay.add_argument("--package", required=True, help="补投包目录")
+    p_vreplay.set_defaults(func=cmd_verify_replay)
+
+    p_seal = sub.add_parser("seal-attempt", help="宣告某次尝试对账结束（仍保留全部证据）")
+    p_seal.add_argument("--store", required=True)
+    p_seal.add_argument("--attempt-id", required=True)
+    p_seal.add_argument("--by", required=True)
+    p_seal.add_argument("--reason")
+    p_seal.set_defaults(func=cmd_seal_attempt)
+
+    p_abort = sub.add_parser("abort-attempt", help="中止没有可用包的尝试并释放其事件占用")
+    p_abort.add_argument("--store", required=True)
+    p_abort.add_argument("--attempt-id", required=True)
+    p_abort.add_argument("--by", required=True)
+    p_abort.add_argument("--reason", required=True)
+    p_abort.set_defaults(func=cmd_abort_attempt)
+
+    p_vstore = sub.add_parser("verify-store", help="校验对账存储哈希链与物化快照")
+    p_vstore.add_argument("--store", required=True)
+    p_vstore.set_defaults(func=cmd_verify_store)
 
     return parser
 

@@ -220,6 +220,11 @@ def export_package(plan: Plan, out_dir: str | Path) -> dict:
                 for name, text in sorted(files.items())
             },
         }
+        # 包内容身份：只由文件哈希/计划摘要/格式等内容字段决定，与生成时间无关。
+        # 登记对账后，回执必须绑定这个摘要，防止业务键相同的另一个包顶替。
+        from .replay import compute_package_digest
+
+        manifest["package_digest"] = compute_package_digest(manifest)
         _write_atomic(
             staging / "manifest.json",
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",

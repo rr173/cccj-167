@@ -1,0 +1,1 @@
+{"attempt_id": "attempt-0001", "package_digest": "0000000000000000000000000000000000000000000000000000000000000000", "event_id": "ev-c26fb572b7caaf0460c4", "payload_sha256": "111eda7c3b41015e7dec3a0c8ec9a053b4485058eddcd40fa109e5fb99d562ef", "result": "success", "reported_at": "2026-11-17T10:00:00Z", "reported_by": "downstream-batch-a"}

@@ -1,0 +1,77 @@
+{
+  "counts": {
+    "approved": 6,
+    "conflicts": 0,
+    "held_unapproved": 0,
+    "items": 6,
+    "merged_duplicate_records": 0,
+    "quarantined": 0,
+    "records": 6,
+    "releasable_quarantined": 0,
+    "retryable": 6,
+    "superseded": 0,
+    "unmatched_dispositions": 0
+  },
+  "files": {
+    "README.txt": {
+      "bytes": 623,
+      "lines": 11,
+      "sha256": "2520879bed482e1ec430bdb901403d973f1f1c3a3cad335fe2f725303e673fa1"
+    },
+    "checksums.sha256": {
+      "bytes": 517,
+      "lines": 6,
+      "sha256": "56b6360e397d75be08d6e723bd18011b744ee1c22bda566b65995a4ef81ff0f3"
+    },
+    "partitions/p-p-a.ndjson": {
+      "bytes": 4062,
+      "lines": 3,
+      "sha256": "28618171495bbcb50d43c92f4a99c6610fdc928b79ec83c5dd76c3eeaedc0f49"
+    },
+    "partitions/p-p-b.ndjson": {
+      "bytes": 4062,
+      "lines": 3,
+      "sha256": "6c37a823df1e513eaf8165a06d94c5cd99079785c459b82676e36647a8e21400"
+    },
+    "plan.json": {
+      "bytes": 19555,
+      "lines": 614,
+      "sha256": "856043cdc30c43e82754869e7f8af5ccf79541ef9da7a119ab5fa2ccfab7e25c"
+    },
+    "quarantine/conflicts.ndjson": {
+      "bytes": 0,
+      "lines": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "quarantine/items.ndjson": {
+      "bytes": 0,
+      "lines": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "format": "dlq-recovery-package",
+  "format_version": 1,
+  "generated_at": "2026-11-17T07:09:48Z",
+  "package_digest": "e953480d6848af06d2efefca072163c792751c1273026f26d8675aed6e017ca1",
+  "partitions": [
+    {
+      "delivered": 3,
+      "first_offset": 1,
+      "items": 3,
+      "last_offset": 3,
+      "partition": "p-a"
+    },
+    {
+      "delivered": 3,
+      "first_offset": 1,
+      "items": 3,
+      "last_offset": 3,
+      "partition": "p-b"
+    }
+  ],
+  "plan_digest": "a95aa3101e699c7e382712bbf623eeb5a0c4cfbc31fd2846829f21a2866728e3",
+  "tool": {
+    "name": "dlq-recovery",
+    "version": "1.0.0"
+  }
+}

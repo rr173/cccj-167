@@ -1,0 +1,11 @@
+{
+  "problem_statuses": [
+    "needs_review"
+  ],
+  "final_statuses": [
+    "cancelled",
+    "deleted",
+    "closed",
+    "completed"
+  ]
+}

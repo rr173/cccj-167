@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# 对账存储是运行期本地状态，不随源码提交
+store/
+recon-store/
