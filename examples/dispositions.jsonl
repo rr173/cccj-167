@@ -1,0 +1,6 @@
+{"message_id":"msg-e-1","action":"retry","operator":"alice","note":"毒丸已定位为本地缓存残留，建议重试（仍需逐版本批准）"}
+{"message_id":"msg-c-1","action":"quarantine","operator":"bob","note":"金额与下游账单不符，先隔离"}
+{"message_id":"msg-c-2","action":"quarantine","operator":"bob","note":"金额与下游账单不符，先隔离"}
+{"message_id":"msg-g-1","action":"retry","operator":"carol","note":"等待值班主管批准 retry"}
+{"message_id":"msg-g-2","action":"retry","operator":"carol","note":"等待值班主管批准 retry"}
+{"message_id":"msg-ghost-1","action":"retry","operator":"dave","note":"消息已不在当前死信文件"}

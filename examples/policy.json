@@ -1,0 +1,5 @@
+{
+  "problem_statuses": ["needs_review"],
+  "final_statuses": ["cancelled", "deleted", "closed", "completed"],
+  "same_offset_payload_rule": "error"
+}
